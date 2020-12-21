@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy.sparse import csr_matrix
-from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 
 class SparseOneHotEncoder:
@@ -9,7 +9,15 @@ class SparseOneHotEncoder:
     A robust (works with unseen values), memory efficient and time efficient alternative to pandas.get_dummies().
     Implements sklearn's fit-transform API.
     '''
-    def __init__(self):
+    def __init__(
+            self,
+            sep='__',
+            dummy_na = False,
+            vectorizer_kwargs = {'binary':True, 'use_idf':False, 'min_df':1,'max_features':None, 'smooth_idf':True,'norm':False}
+    ):
+        self.sep = sep
+        self.dummy_na = dummy_na
+        self.vectorizer = TfidfVectorizer(tokenizer=self.tokenizer,lowercase = False, **vectorizer_kwargs)
         return
 
     def listify_df(self, df):
@@ -75,31 +83,26 @@ class SparseOneHotEncoder:
             columns = list(set(columns))
         return columns
 
-    def fit(self, df, columns, sep='__', dummy_na = True):
+    def fit(self, df, columns):
         '''
         fit OneHotSparse object with data
         :param df: data
-        :param columns: categorical columns to fit
-        :param sep: separator used in new column names (category_name<sep>category_value)
-        :param dummy_na: whether to create a column to nan entries
+        :param columns: categorical columns to fit        
         :return: fitted OneHotSparse object
         '''
         df = df.copy()
-        if dummy_na:
+        if self.dummy_na:
             df = df.append(pd.Series(), ignore_index=True)
             df = df.fillna('NaN')
         columns = self.settify_columns(columns)
-        string_df = self.stringify_columns(df, columns, sep)
-        df_list = self.listify_df(string_df)
-        cv = CountVectorizer(tokenizer=self.tokenizer, lowercase=False, binary=True)
-        cv.fit(df_list)
+        string_df = self.stringify_columns(df, columns, self.sep)
+        df_list = self.listify_df(string_df)        
+        self.vectorizer.fit(df_list)
 
-        self.count_vectorizer = cv
         self.categorical_features = columns
         # sorted list isntead of dict
-        self.categorical_dummies = [k for k in sorted(self.count_vectorizer.vocabulary_, key=self.count_vectorizer.vocabulary_.get, reverse=False)]
+        self.categorical_dummies = [k for k in sorted(self.vectorizer.vocabulary_, key=self.vectorizer.vocabulary_.get, reverse=False)]
 
-        self.sep = sep
         return self
 
     def tokenizer(self,doc):
@@ -112,10 +115,10 @@ class SparseOneHotEncoder:
         '''
         return doc
 
-    def fit_transform(self, df, columns, sep='__', return_df=True):
+    def fit_transform(self, df, columns, return_df=True):
         df = df.copy()
-        self.fit(df, columns, sep)
-        transformed_result = self.transform(df, return_df)
+        self.fit(df, columns)
+        transformed_result = self.transform(df, return_df = return_df)
         return transformed_result
 
     def assert_columns(self, df, columns):
@@ -146,8 +149,10 @@ class SparseOneHotEncoder:
         df = self.assert_columns(df, self.categorical_features)
         string_df = self.stringify_columns(df, self.categorical_features, self.sep)
         df_list = self.listify_df(string_df)
-        transformed_result = self.count_vectorizer.transform(df_list)
-        transformed_result = transformed_result.astype(np.int8)
+        transformed_result = self.vectorizer.transform(df_list)
+        #use memory efficient format for binary vectors
+        if not self.vectorizer.use_idf:
+            transformed_result = transformed_result.astype(np.int8)
 
         if return_df:
             dummy_df = self.matrix_to_df(transformed_result.A, self.categorical_dummies)
